@@ -101,6 +101,7 @@ class HeterRelGraphConv(nn.Module) :
             msg = msg * edges.data['norm']
         return {'msg': msg}
 
+
     def forward(self, g, x):
         g = g.local_var()
         g.nodes['n'].data['h'] = x
