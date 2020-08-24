@@ -65,7 +65,8 @@ def processRS2Code(year,connection):
         applyid = row['apply_id']
         rs2code.update({research_field:applyid})
     return rs2code
-
+# old_process False process from xx_application_new or xx_application_old
+# process_null False process null attribute? False will skip all row contains null attribute
 def processApplication(year, db, old_process = False, process_null = False):
     cursor = db.cursor()
     if not old_process:
@@ -77,6 +78,7 @@ def processApplication(year, db, old_process = False, process_null = False):
     list_obj=[]
     for row in data :
         if not old_process:
+            # only new table have research_field
             title_zh = row['zh_title']
             keyword_zh = row['zh_keyword']
             abstract_zh = row['zh_abstract']
@@ -88,8 +90,17 @@ def processApplication(year, db, old_process = False, process_null = False):
             keyword_zh = row['ckeyword']
             abstract_zh = row['abstract']
             applyid = row['applyid']
-        if not process_null and (title_zh is None  or keyword_zh is None or abstract_zh is None or research_field is None or applyid is None):
-            continue
+        if not process_null \
+                and (title_zh is None or keyword_zh is None or abstract_zh is None or research_field is None or applyid is None):
+            # if this process is focus on new process, there might be few research_field is none,
+            # this \*if judge*\ will give them a chance
+            if not old_process and title_zh is not None and keyword_zh is not None and abstract_zh is not None and applyid is not None :
+                # print(applyid)
+                list_obj.append(kw.application(applyid,
+                                               title_zh,
+                                               abstract_zh,
+                                               keyword_zh,
+                                               research_field))
         else :
             list_obj.append(kw.application(applyid,
                                            title_zh,

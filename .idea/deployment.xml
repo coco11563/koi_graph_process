@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" autoUpload="Always" serverName="root@10.0.82.237:22" deleteMissingItems="true" createEmptyFolders="true" autoUploadExternalChanges="true">
+    <serverData>
+      <paths name="root@10.0.82.237:22">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/jupyter_base/pycharm_001" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="root@10.0.82.239:22">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/shaow/jupyter_base/pycharm_001" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+    </serverData>
+    <option name="myAutoUpload" value="ALWAYS" />
+  </component>
+</project>

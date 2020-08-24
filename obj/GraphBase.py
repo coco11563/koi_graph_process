@@ -8,7 +8,7 @@ import numpy as np
 class GraphBase(object) :
     def __init__(self, appid_appid_e, appid_ros_e, appid_app_edge ,ros_application_e,
                  application_keyword_e, id_index_map ,index_id_map, index_ros_map, index_application_map,
-                 index_keyword_map, application_dict, default_dim = 256, retro = False):
+                 index_keyword_map, application_dict, retro = False):
         # for seperate usage
         self.id_index_map = id_index_map
         self.aae = appid_appid_e
@@ -16,7 +16,6 @@ class GraphBase(object) :
         self.aiae = appid_app_edge
         self.rae = ros_application_e
         self.ake = application_keyword_e
-        self.dim = default_dim
         self.iim = index_id_map
         self.irm = index_ros_map
         self.iam = index_application_map
@@ -191,7 +190,8 @@ class GraphBase(object) :
                     ikm[new_start_id] = self.ikm[son]
                     new_start_id += 1
                 ake_edge.append((old_new_map[f], old_new_map[son]))
-        return GraphBase(list(aae_edge), are_edge, aiae_edge, rae_edge, ake_edge, id_index_map ,iim, irm, iam, ikm, self.undirected)
+        return GraphBase(list(aae_edge), are_edge, aiae_edge, rae_edge, ake_edge, id_index_map ,iim, irm, iam, ikm,
+                         application_dict=self.application_dict, retro = self.undirected)
 
     def get_split_appid_graph(self, appid, recursive=True):
         gb = \
@@ -256,7 +256,8 @@ class GraphBase(object) :
                 rae.append((f,son))
             else :
                 test_e.append((f, 1 , son)) # 1 represent applyid to application rel type
-        return GraphBase(self.aae, self.are, aiae, rae, self.ake, self.id_index_map ,self.iim, self.irm, self.iam, self.ikm, self.undirected), \
+        return GraphBase(self.aae, self.are, aiae, rae, self.ake, self.id_index_map ,self.iim, self.irm, self.iam, self.ikm,
+                         application_dict=self.application_dict, retro=self.undirected), \
                test_application, test_e
 
     def negative_test_sampling_are (self, sample_rate = 0.5, negative_rate = 10) :
@@ -275,7 +276,7 @@ class GraphBase(object) :
         chosen_are = relabeled_pair[chosen_are_tag]
         neg_sample, label = self.negative_sampling_are(relabeled_edges, negative_rate)
         return GraphBase(self.aae, self.are, self.aiae, list(chosen_are), self.ake, self.id_index_map, self.iim, self.irm, self.iam,
-                         self.ikm, self.undirected), \
+                         self.ikm, application_dict=self.application_dict, retro=self.undirected), \
                neg_sample, label
 
     # pos_sample : positive samples

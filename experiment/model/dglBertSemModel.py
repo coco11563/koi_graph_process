@@ -1,46 +1,73 @@
+import dgl.nn.pytorch as dglModel
 import torch as torch
 import torch.nn as nn
 import torch.nn.functional as F
-import dgl.nn.pytorch as dglModel
+from bert_serving.client import BertClient
 # from dgl.nn.pytorch import RelGraphConv
 # this model will combine all embedding together(from bottom to the top)
-from gensim.models import word2vec
 from dgl import function as fn
 from dgl.nn.pytorch import utils
 
-from dgl_model import BaseRGCN
+bs = BertClient(ip='10.0.82.237', port=2345, check_length=False)
 
-semantic_base = word2vec.Word2Vec.load('2019_model')
 
-class ZeroInitEmbeddingLayer(nn.Module):
+def get_none_empty_ind(index_keyword_map):
+    lis = []
+    for ikp in index_keyword_map.items():
+        if ikp[1] == '':
+            print(ikp[0], ikp[1])
+            continue
+        else:
+            lis.append(ikp[0])
+    return lis
+
+
+# 1 this model initial all keywords data by bert
+class BertInitEmbeddingLayer(nn.Module):
     # this embedding layer represent semantic information
 
-    def __init__(self, num_nodes, h_dim, i2w_dict):
-        super(ZeroInitEmbeddingLayer, self).__init__()
+    def __init__(self, num_nodes, h_dim, i2w_dict, i2r_dict, i2a_dict, app_dict,
+                 pretrain_keywords=True, pretrain_ros=True, pretrain_application=True):
+        super(BertInitEmbeddingLayer, self).__init__()
+
         self.embedding = torch.nn.Embedding(num_nodes, h_dim)
         # self.embedding.weight.data = torch.zeros((num_nodes, h_dim))
-            # init w2v
-        word_num = 0
-        for i in range(num_nodes):
-            if i2w_dict.__contains__(i) and semantic_base.wv.__contains__(i2w_dict[i]):
-                # print(i2w_dict[i])
-                word_num += 1
-                self.embedding.weight[i] = torch.FloatTensor(semantic_base.wv.get_vector(i2w_dict[i]))
-        data = self.embedding.weight.data
-        self.embedding.weight = nn.Parameter(data)
+        # init w2v
+        if pretrain_keywords:
+            print('init pretrain keywords')
+            ind = torch.LongTensor(get_none_empty_ind(i2w_dict))
+            self.embedding.weight.data[ind] = torch.FloatTensor(bs.encode([i2w_dict[int(i)] for i in ind]))
+            emb = self.embedding.weight.data
+            self.embedding.weight = nn.Parameter(emb)
+        if pretrain_ros:
+            print('init pretrain ros')
+            ind = torch.LongTensor(get_none_empty_ind(i2r_dict))
+            self.embedding.weight.data[ind] = torch.FloatTensor(bs.encode([i2r_dict[int(i)] for i in ind]))
+            emb = self.embedding.weight.data
+            self.embedding.weight = nn.Parameter(emb)
+        if pretrain_application:
+            print('init pretrain application')
+            ind = torch.LongTensor(get_none_empty_ind(i2a_dict))
+            self.embedding.weight.data[ind] = torch.FloatTensor(
+                bs.encode([app_dict[i2a_dict[int(i)]].abstract for i in ind]))
+            emb = self.embedding.weight.data
+            self.embedding.weight = nn.Parameter(emb)
         print(self.embedding.weight.is_leaf)
-        print('init ' + str(word_num) + ' words vector')
+        # print('init ' + str(word_num) + ' words vector')
         print('all word amount is ' + str(len(i2w_dict)))
+
     # squeeze remove useless dim
 
-    def forward(self, g, h,r,n):
+    def forward(self, g, h, r, n):
         return self.embedding(h.squeeze())
+
 
 class SemRGCN(nn.Module):
     # num_rels = num_rel * 2 <-- why???
-    def __init__(self, num_nodes, h_dim, out_dim, num_rels, num_bases,
+    def __init__(self, num_nodes, h_dim, out_dim, num_rels, num_bases, i2w_dict, i2r_dict, i2a_dict, app_dict,
+                 pretrain_keywords=True, pretrain_ros=True, pretrain_application=True,
                  num_hidden_layers=1, dropout=0,
-                 use_self_loop=False, use_cuda=False, dict=None):
+                 use_self_loop=False, use_cuda=False):
         super(SemRGCN, self).__init__()
         self.num_nodes = num_nodes
         self.h_dim = h_dim
@@ -51,7 +78,13 @@ class SemRGCN(nn.Module):
         self.dropout = dropout
         self.use_self_loop = use_self_loop
         self.use_cuda = use_cuda
-        self.i2w_dict = dict
+        self.i2w_dict = i2w_dict
+        self.i2r_dict = i2r_dict
+        self.i2a_dict = i2a_dict
+        self.app_dict = app_dict
+        self.pretrain_keywords = pretrain_keywords
+        self.pretrain_application = pretrain_application
+        self.pretrain_ros = pretrain_ros
         # create rgcn layers
         self.build_model()
 
@@ -71,13 +104,16 @@ class SemRGCN(nn.Module):
             self.layers.append(h2o)
 
     def build_input_layer(self):
-        return ZeroInitEmbeddingLayer(self.num_nodes, self.h_dim, self.i2w_dict)
+        return BertInitEmbeddingLayer(self.num_nodes, self.h_dim,
+                                      self.i2w_dict, self.i2r_dict, self.i2a_dict, self.app_dict
+                                      , pretrain_ros=self.pretrain_ros, pretrain_keywords=self.pretrain_keywords,
+                                      pretrain_application=self.pretrain_application)
 
     def build_hidden_layer(self, idx):
         # act = F.relu if idx < self.num_hidden_layers - 1 else None
         return RelGraphConvRefactor(self.h_dim, self.h_dim, self.num_rels, "basis",
-                self.num_bases, activation=None, self_loop=False,
-                dropout=self.dropout)
+                                    self.num_bases, activation=None, self_loop=False,
+                                    dropout=self.dropout)
 
     def forward(self, g, h, r, norm):
         for layer in self.layers:
@@ -88,27 +124,28 @@ class SemRGCN(nn.Module):
         return None
 
 
-
 class LinkPredict(nn.Module):
-    def __init__(self, in_dim, h_dim, num_rels, dict, num_bases=-1,
-                 num_hidden_layers=1, dropout=0, use_cuda=False, reg_param=0):
+    def __init__(self, in_dim, h_dim, num_rels, i2w_dict, i2r_dict, i2a_dict, app_dict, num_bases=-1,
+                 num_hidden_layers=1, dropout=0, use_cuda=False, reg_param=0, pretrain_list=None):
         super(LinkPredict, self).__init__()
-        self.rgcn = SemRGCN(in_dim, h_dim, h_dim, num_rels * 2, num_bases, dict = dict,
-                         num_hidden_layers=num_hidden_layers, dropout=dropout, use_cuda=use_cuda)
+        if pretrain_list is None:
+            pretrain_list = [True, True, True]
+        self.rgcn = SemRGCN(in_dim, h_dim, h_dim, num_rels * 2, num_bases, i2w_dict, i2r_dict, i2a_dict, app_dict, pretrain_list[0], pretrain_list[1], pretrain_list[2],
+                            num_hidden_layers=num_hidden_layers, dropout=dropout, use_cuda=use_cuda)
         # self.embedding = self.rgcn.layers[0]
         self.reg_param = reg_param
         self.w_relation = nn.Parameter(torch.Tensor(num_rels, h_dim))
         nn.init.xavier_uniform_(self.w_relation,
                                 gain=nn.init.calculate_gain('relu'))
-        if not self.rgcn.i2w_dict :
+        if not self.rgcn.i2w_dict:
             print('i2w_dict is not welly initiate')
             raise
 
     def calc_score(self, embedding, triplets):
         # DistMult
-        s = embedding[triplets[:,0]]
-        r = self.w_relation[triplets[:,1]]
-        o = embedding[triplets[:,2]]
+        s = embedding[triplets[:, 0]]
+        r = self.w_relation[triplets[:, 1]]
+        o = embedding[triplets[:, 2]]
         score = torch.sum(s * r * o, dim=1)
         return score
 
@@ -126,15 +163,17 @@ class LinkPredict(nn.Module):
         reg_loss = self.regularization_loss(embed)
         return predict_loss + self.reg_param * reg_loss
 
+
 def node_norm_to_edge_norm(g, node_norm):
     g = g.local_var()
     # convert to edge norm
     g.ndata['norm'] = node_norm
-    g.apply_edges(lambda edges : {'norm' : edges.dst['norm']})
+    g.apply_edges(lambda edges: {'norm': edges.dst['norm']})
     return g.edata['norm']
 
 
 """Torch Module for Relational graph convolution layer"""
+
 
 class RelGraphConvRefactor(dglModel.RelGraphConv):
     def __init__(self,
@@ -147,9 +186,9 @@ class RelGraphConvRefactor(dglModel.RelGraphConv):
                  activation=None,
                  self_loop=False,
                  dropout=0.0,
-                 reduce_func = fn.mean):
+                 reduce_func=fn.mean):
         super(RelGraphConvRefactor, self).__init__(in_feat, out_feat, num_rels, regularizer, num_bases
-                                                   ,bias, activation, self_loop, dropout)
+                                                   , bias, activation, self_loop, dropout)
 
         self.reduce_func = reduce_func
         if regularizer == "basis":
@@ -183,10 +222,9 @@ class RelGraphConvRefactor(dglModel.RelGraphConv):
         else:
             raise ValueError("Regularizer must be either 'basis' or 'bdd'")
 
-
     def nothing_message_func(self, edges):
         msg = edges.src['h']
-        return {'msg' : msg}
+        return {'msg': msg}
 
     def forward(self, g, x, etypes, norm=None):
         g = g.local_var()

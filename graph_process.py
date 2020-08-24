@@ -4,7 +4,8 @@ import obj.GraphBase as GraphBase
 import utils
 import torch as torch
 # 从RMDBS中取出图相关的数据，并将其转化成边关系
-
+import importlib
+importlib.reload(mysql)
 # 父节点指向子节点
 # id => app id
 # index => graph id
@@ -54,7 +55,8 @@ def apply_application_graph(application_list, start_id, id_index_map, useros=Tru
         id_index_map[app_hash] = app_id
         start_id += 1
         for kw in keywords:
-            if keyword_set.__contains__(kw):
+            # if kw == '' : continue # 去除空关键字
+            if keyword_set.__contains__(kw) :
                 kw_id = keyword_index_map[kw]
                 app_kw_edge.append((app_id, kw_id))
             else:
@@ -65,8 +67,9 @@ def apply_application_graph(application_list, start_id, id_index_map, useros=Tru
                 start_id += 1
         ros = application.research_field
         appid_id = id_index_map[application.applyid]
-        if useros:
-            if ros == None:
+        if useros: # is this cursor is to table_old then no ros will be provided
+            if ros == None :
+                    # or ros == '': # 去除空ros
                 appid_app_edge.append((appid_id, app_id))
             else:
                 if apply_ros_set.__contains__(ros):
