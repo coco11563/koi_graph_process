@@ -2,6 +2,7 @@
 import pymysql.cursors
 import keyword_objects as kw
 import importlib
+import copy
 importlib.reload(kw)
 def initSQLConn():
     connection = pymysql.connect(host='10.0.82.237',
@@ -65,9 +66,128 @@ def processRS2Code(year,connection):
         applyid = row['apply_id']
         rs2code.update({research_field:applyid})
     return rs2code
+
+def processApplyId(applylist : list) :
+    return [i.applyid for i in applylist]
+
+def isEndCodeSimple(s) :
+    return len(s) == len('A010101')
+
+def isSecCodeSimple(s) :
+    return len(s) == len('A0101')
+
+def isFirstCodeSimple(s) :
+    return len(s) == len('A01')
+
+def isHeadCodeSimple(s) :
+    return len(s) == len('A')
+
+def isRootSimple(s) :
+    return s == 'root'
+
+def EndCode2CodeSimple(code) :
+    return code[:5]
+
+def getLastCodeSimple(code) :
+    if isHeadCodeSimple(code) : return code
+    else :
+        l = len(code)
+        end_index = l - 2
+        return code[:end_index]
+
+def getCodeLevel(code) :
+    if isEndCodeSimple(code) : return 5
+    elif isSecCodeSimple(code) : return 4
+    elif isFirstCodeSimple(code) : return 3
+    elif isHeadCodeSimple(code) : return 2
+    elif isRootSimple(code) : return 1
+    else : return 0
+
+# basic test pass
+# 输入appid list 返回appid 对应的index
+def processApplyIdList(applyid_list : list, start_id) :
+    unique_set = set()
+    used_code_set = set()
+    for id in applyid_list :
+        unique_set.add(id)
+    start_id_ = start_id
+    id_index_map = dict()
+    for id in unique_set :
+        id_index_map[id] = start_id_
+        start_id_ += 1
+    item = copy.deepcopy(id_index_map).items()
+    for k,v in item :
+        if isEndCodeSimple(k) : #确认是三级代码
+            pre_code = EndCode2CodeSimple(k)
+            used_code_set.add(pre_code)
+            if id_index_map.__contains__(pre_code) :
+                id_index_map[k] = id_index_map[pre_code] # 该末级代码指向上级
+
+            else :
+                id_index_map[pre_code] = start_id_ # no add
+                start_id_ += 1
+                id_index_map[k] = id_index_map[pre_code]
+        else:
+            used_code_set.add(k)
+    item = id_index_map.items()
+    # 精简code使其从0开始
+    id_index_map_ = dict()
+    start = 0
+    for k,v in item :
+        if id_index_map_.__contains__(id_index_map[k]) :
+            id_index_map[k] = id_index_map_[v]
+        else :
+            id_index_map_[v] = start
+            start += 1
+            id_index_map[k] = id_index_map_[v]
+    index_id_map = dict()
+    for code in used_code_set :
+        index_id_map[id_index_map[code]] = code
+    return id_index_map, index_id_map, len(used_code_set) - 1
+
+def processApplyIdListWithLimit(applyid_list : list, start_id, code_limit = 3) :
+    unique_set = set()
+    used_code_set = set()
+    for id in applyid_list :
+        unique_set.add(id)
+    start_id_ = start_id
+    id_index_map = dict()
+    for id in unique_set :
+        id_index_map[id] = start_id_
+        start_id_ += 1
+    item = copy.deepcopy(id_index_map).items()
+    for k,v in item :
+        code = k
+        if getCodeLevel(code) > code_limit :
+            while getCodeLevel(code) > code_limit :
+                code = getLastCodeSimple(code) # 取得符合标准的code
+            used_code_set.add(code)
+            if id_index_map.__contains__(code):
+                id_index_map[k] = id_index_map[code]  # 该末级代码指向上
+            else:
+                id_index_map[code] = start_id_  # no add
+                start_id_ += 1
+                id_index_map[k] = id_index_map[code]
+        else:
+            used_code_set.add(k)
+    item = id_index_map.items()
+    # 精简code使其从0开始
+    id_index_map_ = dict()
+    start = 0
+    for k,v in item :
+        if id_index_map_.__contains__(id_index_map[k]) :
+            id_index_map[k] = id_index_map_[v]
+        else :
+            id_index_map_[v] = start
+            start += 1
+            id_index_map[k] = id_index_map_[v]
+    index_id_map = dict()
+    for code in used_code_set :
+        index_id_map[id_index_map[code]] = code
+    return id_index_map, index_id_map, len(used_code_set) - 1
 # old_process False process from xx_application_new or xx_application_old
 # process_null False process null attribute? False will skip all row contains null attribute
-def processApplication(year, db, old_process = False, process_null = False):
+def processApplication(year, db, old_process = False, process_null = False, filter = None, quest = None):
     cursor = db.cursor()
     if not old_process:
         cursor.execute("SELECT apply_id,zh_title,zh_keyword,zh_abstract,research_field FROM " + str(year) + "_application_new;")
@@ -107,8 +227,27 @@ def processApplication(year, db, old_process = False, process_null = False):
                                            abstract_zh,
                                            keyword_zh,
                                            research_field))
+    if filter :
+        ret = []
+        for i in list_obj :
+            if filter(i, quest) :
+                ret.append(i)
+        list_obj = ret
     return list_obj
-
+def applyid_filter(app : kw.application, quest) :
+    applyid = app.applyid
+    if len(applyid) > len(quest) :
+        q_length = len(quest)
+        if applyid[0:q_length] == quest :
+            return True
+    elif len(quest) > len(applyid) :
+        q_length = len(applyid)
+        if quest[0:q_length] == applyid :
+            return True
+    else :
+        if quest == applyid :
+            return True
+    return False
 def make_word_freq_map (year, db) :
     cursor = db.cursor()
     cursor.execute(
@@ -163,12 +302,8 @@ def make_all_raw_word_freq_map (year, db) :
 
 if __name__ == '__main__':
     import pymysql.cursors
-
-    conn = pymysql.connect(host='10.0.202.18',
-                           user='root',
-                           password='',
-                           # _xiaomenG789O
-                           db='application_processed',
-                           charset='utf8mb4',
-                           cursorclass=pymysql.cursors.DictCursor)
-    make_all_raw_word_freq_map(2018, conn)
+    conn = initSQLConn()
+    count = 0
+    # make_all_raw_word_freq_map(2018, conn)
+    appli = processApplication(2019, conn, filter=applyid_filter, quest='F01')
+    print(len(appli))

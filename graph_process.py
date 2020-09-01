@@ -9,7 +9,7 @@ importlib.reload(mysql)
 # 父节点指向子节点
 # id => app id
 # index => graph id
-
+# if simple = true, all the EndCode will be ignored
 def apply_id_graph(root, start_id, edge, index_id_map, id_index_map, root_apply_id):
     for keys in root:
         id_index_map[keys] = start_id
@@ -37,6 +37,8 @@ def apply_application_graph(application_list, start_id, id_index_map, useros=Tru
     index_keyword_map = dict()
     index_ros_map = dict()
     index_app_map = dict()
+    appid_ros_map_set = dict()
+    app_index_map = dict()
 
     keyword_set = set()
     apply_ros_set = set()
@@ -52,7 +54,7 @@ def apply_application_graph(application_list, start_id, id_index_map, useros=Tru
         keywords = application.keyword
         app_id = start_id
         index_app_map[app_id] = app_hash
-        id_index_map[app_hash] = app_id
+        app_index_map[app_hash] = app_id
         start_id += 1
         for kw in keywords:
             # if kw == '' : continue # 去除空关键字
@@ -72,25 +74,47 @@ def apply_application_graph(application_list, start_id, id_index_map, useros=Tru
                     # or ros == '': # 去除空ros
                 appid_app_edge.append((appid_id, app_id))
             else:
-                if apply_ros_set.__contains__(ros):
+                # ros是string形式的object
+                if apply_ros_set.__contains__(ros): # 判断是否需要为该ros赋新id
                     ros_id = ros_index_map[ros]
-                    appid_ros_edge.append((appid_id, ros_id))
+                    if appid_ros_map_set.__contains__(appid_id) :
+                        ros_set = appid_ros_map_set[appid_id]
+                        if not ros_set.__contains__(ros_id) :
+                            appid_ros_edge.append((appid_id, ros_id))
+                            appid_ros_map_set[appid_id].add(ros_id)
+                        # else : 边已存在
+                    else :
+                        appid_ros_map_set[appid_id] = set()
+                        appid_ros_map_set[appid_id].add(ros_id)
+                        appid_ros_edge.append((appid_id, ros_id))
                     app_ros_edge.append((ros_id, app_id))
-                else:
+                else: # 新出现的ros
                     ros_id = start_id
                     start_id += 1
                     ros_index_map[ros] = ros_id
                     index_ros_map[ros_id] = ros
                     apply_ros_set.add(ros)
-                    appid_ros_edge.append((appid_id, ros_id))
+                    if appid_ros_map_set.__contains__(appid_id) :
+                        ros_set = appid_ros_map_set[appid_id]
+                        if not ros_set.__contains__(ros_id) :
+                            appid_ros_edge.append((appid_id, ros_id))
+                            appid_ros_map_set[appid_id].add(ros_id)
+                        # else : 边已存在
+                    else :
+                        appid_ros_map_set[appid_id] = set()
+                        appid_ros_map_set[appid_id].add(ros_id)
+                        appid_ros_edge.append((appid_id, ros_id))
+                    # appid_ros_edge.append((appid_id, ros_id))
                     app_ros_edge.append((ros_id, app_id))
         else:
             appid_app_edge.append((appid_id, app_id))
-    return index_keyword_map, index_ros_map, index_app_map, appid_ros_edge, appid_app_edge, app_kw_edge, app_ros_edge, app_dict, start_id
+    return index_keyword_map, index_ros_map, index_app_map, appid_ros_edge, appid_app_edge, app_kw_edge, app_ros_edge, app_dict, \
+           start_id, keyword_index_map, ros_index_map,app_index_map
+
 
 
 #
-def process_year_graph(year, process_null=True, process_old=False):
+def process_year_graph(year, process_null=True, process_old=False, filter = None, quest= None):
     conn = mysql.initSQLConn()
     _, _, id_tree, code2word = mysql.processKeywordSql(year, conn, process_old, process_null)
     root = id_tree.root
@@ -104,14 +128,58 @@ def process_year_graph(year, process_null=True, process_old=False):
     start_id += 1
     start_id = apply_id_graph(root, start_id, appid_edge, index_id_map, id_index_map, root_apply_id)
     print('done init {} nodes from apply id'.format(start_id - 1))
-    application_list = mysql.processApplication(year, conn)
-    index_keyword_map, index_ros_map, index_app_map, appid_ros_edge, appid_app_edge, app_kw_edge, app_ros_edge, app_dict, start_id_ = \
+    application_list = mysql.processApplication(year, conn, filter=filter, quest=quest)
+    index_keyword_map, index_ros_map, index_app_map, appid_ros_edge, appid_app_edge, app_kw_edge, app_ros_edge, app_dict, start_id_ ,_,_,_= \
         apply_application_graph(application_list, start_id, id_index_map, not process_old)
     print('done init {} nodes from application'.format(start_id_ - 1))
     return appid_edge, appid_ros_edge, appid_app_edge, app_ros_edge, app_kw_edge, \
            id_index_map, index_id_map, index_keyword_map, index_ros_map, index_app_map, \
            app_dict
-
+# quit all end code
+def process_year_graph_simple(year, process_null=True, process_old=False, code_limit=3, filter = None, quest= None):
+    conn = mysql.initSQLConn()
+    # make_all_raw_word_freq_map(2018, conn)
+    appli = mysql.processApplication(year, conn, old_process=process_old, process_null=process_null , filter=filter, quest=quest)
+    appid_li = [i.applyid for i in appli]
+    # i = ['A010101', 'A0101', 'B010101']
+    id_index_map, index_id_map, _ = mysql.processApplyIdListWithLimit(appid_li, 0, code_limit=code_limit)
+    print('apply id now')
+    index_id_map, id_index_map, edge, start_id = apply_id_simple(index_id_map, id_index_map)
+    print('done init {} nodes from apply id'.format(start_id - 1))
+    index_keyword_map, index_ros_map, index_app_map, appid_ros_edge, appid_app_edge, app_kw_edge, app_ros_edge, app_dict, start_id_ , _, _ , _= \
+        apply_application_graph(appli, start_id, id_index_map, not process_old)
+    print('done init {} nodes from application'.format(start_id_ - 1))
+    return edge, appid_ros_edge, appid_app_edge, app_ros_edge, app_kw_edge, \
+           id_index_map, index_id_map, index_keyword_map, index_ros_map, index_app_map, \
+           app_dict
+# 不添加额外连接， 每个只连接到上层
+# return indexidmap 讲数字转换为applyid
+# id index map 讲未简化的ID转换为index
+# edge 返回 appid 边
+def apply_id_simple(index_id_map : dict, id_index_map : dict) :
+    apply_id_set = id_index_map.keys()
+    start_id = len(index_id_map) # 目前位置
+    edge = []
+    import copy
+    index_id_map_ = copy.deepcopy(index_id_map)
+    id_index_map_ = copy.deepcopy(id_index_map)
+    for s in apply_id_set :
+        code = s
+        index_pre = id_index_map_[code]
+        while(mysql.getCodeLevel(code) >= 0) :
+            code = mysql.getLastCodeSimple(code)
+            if id_index_map_.__contains__(code) : # 直接找到上层
+                edge.append((id_index_map_[code] , index_pre))
+                break
+            elif mysql.getCodeLevel(code) == 2:
+                index_id_map_[start_id] = code
+                id_index_map_[code] = start_id
+                start_id += 1
+                edge.append((id_index_map_[code], index_pre))
+                break
+                # 若这个code是顶级编码但不属于A-H
+            else : continue
+    return index_id_map_, id_index_map_, edge, start_id
 
 # this can only print meta path
 import pygraphviz as pgv
@@ -123,7 +191,7 @@ def plot_graph(nxg):
         ag.add_edge(u, v, label=k)
     ag.layout('dot')
     ag.draw('graph.png')
-
+# turn gb to edge list
 def get_graph_edges(graph_base : GraphBase, train = 0.8, test = 0.1, validation = 0.1) :
     if train + test + validation != 1 :
         raise Exception("the train/test/validation percentage is not right")
@@ -159,7 +227,7 @@ def edge_build(edges, rel_no, app_list) :
         relabeled_edges = np.stack((src, rel, dst)).transpose()
         print(type(relabeled_edges[0][0]))
         app_list.append(relabeled_edges)
-
+# random pick edge
 class edges_data(object) :
     def __init__(self, edges, train_p, test_p) :
         num_to_generate = edges.shape[0]
